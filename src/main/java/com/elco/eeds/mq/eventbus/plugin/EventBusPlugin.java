@@ -1,8 +1,9 @@
 package com.elco.eeds.mq.eventbus.plugin;
 
 import com.elco.eeds.agent.mq.plugin.MQServicePlugin;
-import com.elco.eeds.agent.mq.plugin.ReceiverMessagerHandler;
-import com.elco.eeds.mq.eventbus.bean.EventBusProperties;
+import com.elco.eeds.agent.mq.plugin.MessageHandler;
+import com.elco.eeds.agent.mq.plugin.ReceiverMessageHandler;
+import com.elco.eeds.agent.mq.plugin.ReceiverMessageReplayHandler;
 import com.elco.eeds.mq.eventbus.constant.RegistrationEnum;
 import com.elco.eeds.mq.eventbus.handler.ExceptionHandler;
 import com.elco.eeds.mq.eventbus.handler.RegistrationHandler;
@@ -59,13 +60,19 @@ public class EventBusPlugin extends MQServicePlugin<EventBus> {
   }
 
   @Override
-  public void subscribe(String topic, ReceiverMessagerHandler messageHandler) {
+  public void subscribe(String topic, MessageHandler messageHandler) {
     checkTopic(topic);
     MessageConsumer<String> consumer = client.consumer(topic, msg -> {
       try {
-        String replay = messageHandler.handleRecData(topic, msg.body());
-        if (null != replay && "".equals(replay)) {
-          msg.reply(replay);
+        if (messageHandler instanceof ReceiverMessageHandler) {
+          ReceiverMessageHandler receiverMessageHandler = (ReceiverMessageHandler) messageHandler;
+          receiverMessageHandler.handleRecData(topic, msg.body());
+        } else if (messageHandler instanceof ReceiverMessageReplayHandler) {
+          ReceiverMessageReplayHandler replayHandler = (ReceiverMessageReplayHandler) messageHandler;
+          String replay = replayHandler.handleRecDataWitResult(topic, msg.body());
+          if (null != replay && "".equals(replay)) {
+            msg.reply(replay);
+          }
         }
       } catch (Exception e) {
         logger.error("订阅者未处理消息异常,异常信息:", e);
@@ -80,7 +87,7 @@ public class EventBusPlugin extends MQServicePlugin<EventBus> {
 
   @Override
   public void subscribeWithQueue(String topic, String queueName,
-      ReceiverMessagerHandler messageHandler) {
+      MessageHandler messageHandler) {
     throw new RuntimeException("EventBus暂不支持分组消费,可采用Send方法来实现分组消费");
   }
 
@@ -131,10 +138,11 @@ public class EventBusPlugin extends MQServicePlugin<EventBus> {
     Object object = Json.decodeValue(driverInfo);
     VertxOptions options = new VertxOptions();
     if (object instanceof JsonObject) {
-      JsonObject jsonObject = new JsonObject(driverInfo);
-      EventBusProperties eventBusProperties = jsonObject.mapTo(EventBusProperties.class);
-      options.setWorkerPoolSize(eventBusProperties.getWorkerPoolSize());
+//      JsonObject jsonObject = new JsonObject(driverInfo);
+//      EventBusProperties eventBusProperties = jsonObject.mapTo(EventBusProperties.class);
+//      options.setWorkerPoolSize(eventBusProperties.getWorkerPoolSize());
     }
+    options.setMaxEventLoopExecuteTime(60000000000L);
     Vertx vertx = Vertx.vertx(options);
     EventBus eventBus = vertx.eventBus();
     this.setClient(eventBus);
@@ -142,7 +150,8 @@ public class EventBusPlugin extends MQServicePlugin<EventBus> {
 
   @Override
   public boolean checkMqType(String mqType) {
-    return mqType.toLowerCase().equals(EventBusProperties.MQ_TYPE);
+    return true;
+//    return mqType.toLowerCase().equals(EventBusProperties.MQ_TYPE);
   }
 
   private void addConsumer(String topic, MessageConsumer<String> messageConsumer) {
